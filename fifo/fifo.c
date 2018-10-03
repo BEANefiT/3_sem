@@ -63,6 +63,8 @@ int reader (char* fifo_pathname)
 		if (write (STDOUT_FILENO, &buf, read_result) == -1)
 			return err_printf ("err while writing to stdout\n");
 	}
+
+	close (fifo_fd);
 }
 
 int err_printf (char* format, ...)
