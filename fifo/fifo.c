@@ -52,23 +52,33 @@ int main (int argc, char* argv[])
 
 int reader (char* names_pathname)
 {
-	char* fifo_pathname [FIFO_NAME_SIZE] = {};
+	char fifo_pathname [FIFO_NAME_SIZE] = {};
 	int names_fd	= -1;
 	int fifo_fd	= -1;
-	
-	if ((names_fd = open (names_pathname, O_RDONLY)) == -1)
+
+	if ((names_fd = open (names_pathname, O_RDWR)) == -1)
 		return err_printf (fifo_fd, names_fd, -1,
 				   "No such file or directory: \"%s\"\n",
 				   names_pathname);
 
-	if ((read (names_fd, &fifo_pathname, FIFO_NAME_SIZE)) == -1)
-		return err_printf (fifo_fd, names_fd, -1,
-		   		   "err while reading from names_fifo\n");
+	pid_t pid = getpid();
 
-	if ((fifo_fd = open (names_pathname, O_RDONLY)) == -1)
+	sprintf (fifo_pathname, "fifo_%d", pid);
+
+	if ((mkfifo (fifo_pathname, 0644) == -1) && (errno != EEXIST))
 		return err_printf (fifo_fd, names_fd, -1,
-				   "No such file or directory: \"%s\"\n",
-				   fifo_pathname);
+				   "can't create %s\n", fifo_pathname);
+
+	if (write (names_fd, &fifo_pathname, FIFO_NAME_SIZE) == -1)
+		return err_printf (fifo_fd, names_fd, -1,
+				   "err while writing to names_fifo\n");
+
+	if ((fifo_fd = open (fifo_pathname, O_RDONLY)) == -1)
+		return err_printf (fifo_fd, names_fd, -1,
+			   	   "No such file or directory: \"%s\"\n",
+	 		   	   fifo_pathname);
+
+	close (names_fd);
 
 	char buf [BUF_SIZE] = {};
 
@@ -97,34 +107,26 @@ int writer (char* names_pathname, char* target_pathname)
 	int names_fd	= -1;
 	int target_fd 	= -1;
 	
+	if ((names_fd = open (names_pathname, O_RDWR)) == -1)
+		return err_printf (fifo_fd, names_fd, target_fd,
+				   "No such file or directory: \"%s\"\n",
+				   names_pathname);
+
+	if ((read (names_fd, &fifo_pathname, FIFO_NAME_SIZE)) == -1)
+		return err_printf (fifo_fd, names_fd, target_fd,
+		   		   "err while reading from names_fifo\n");
+
+	close (names_fd);
+
+	if ((fifo_fd = open (fifo_pathname, O_WRONLY | O_NONBLOCK)) == -1)
+		return err_printf (fifo_fd, names_fd, target_fd,
+				   "No such file or directory: \"%s\"\n",
+				   fifo_pathname);
+
 	if ((target_fd = open (target_pathname, O_RDONLY)) == -1)
 		return err_printf (fifo_fd, target_fd, names_fd,
 				   "No such file or directory: \"%s\"\n",
 				   target_pathname);
-
-	if ((names_fd = open (names_pathname, O_WRONLY)) == -1)
-		return err_printf (fifo_fd, target_fd, names_fd,
-				   "No such file or directory: \"%s\"\n",
-				   names_pathname);
-
-	uid_t uid = getuid();
-
-	sprintf (fifo_pathname, "fifo_%d", uid);
-
-	if ((mkfifo (fifo_pathname, 0644) == -1) && (errno != EEXIST))
-		return err_printf (fifo_fd, target_fd, names_fd,
-				   "can't create %s\n", fifo_pathname);
-
-	if ((fifo_fd = open (fifo_pathname, O_WRONLY)) == -1)
-		return err_printf (fifo_fd, target_fd, names_fd,
-			   	   "No such file or directory: \"%s\"\n",
-	 		   	   fifo_pathname);
-
-	if (write (names_fd, &fifo_pathname, FIFO_NAME_SIZE) == -1)
-		return err_printf (fifo_fd, target_fd, names_fd,
-				   "err while writing to names_fifo\n");
-
-	close (names_fd);
 
 	char buf [BUF_SIZE] = {};
 
