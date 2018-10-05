@@ -78,6 +78,8 @@ int reader (char* names_pathname)
 			   	   "No such file or directory: \"%s\"\n",
 	 		   	   fifo_pathname);
 
+	unlink (fifo_pathname);
+
 	close (names_fd);
 
 	char buf [BUF_SIZE] = {};
@@ -119,9 +121,15 @@ int writer (char* names_pathname, char* target_pathname)
 	close (names_fd);
 
 	if ((fifo_fd = open (fifo_pathname, O_WRONLY | O_NONBLOCK)) == -1)
+	{
+		if (errno == ENXIO)
+			return err_printf (fifo_fd, names_fd, target_fd,
+					   "No reader found, errno = ENXIO\n");
+
 		return err_printf (fifo_fd, names_fd, target_fd,
 				   "No such file or directory: \"%s\"\n",
 				   fifo_pathname);
+	}
 
 	if ((target_fd = open (target_pathname, O_RDONLY)) == -1)
 		return err_printf (fifo_fd, target_fd, names_fd,
