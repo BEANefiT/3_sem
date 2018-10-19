@@ -9,7 +9,7 @@
 
 #define BUF_SIZE 32
 #define FIFO_NAME_SIZE 10
-#define MAX_TIME 10
+#define MAX_TIME 7
 
 int reader (char* names_pathname);
 int writer (char* names_pathname, char* target_pathname);
@@ -53,18 +53,18 @@ int main (int argc, char* argv[])
 
 int reader (char* names_pathname)
 {
-	char fifo_pathname [FIFO_NAME_SIZE] = {};
+	char fifo_pathname [FIFO_NAME_SIZE];
 	int names_fd	= -1;
 	int fifo_fd	= -1;
+
+	pid_t pid = getpid();
+
+	sprintf (fifo_pathname, "f_%d", pid);
 
 	if ((names_fd = open (names_pathname, O_RDWR)) == -1)
 		return err_printf (NULL, fifo_fd, names_fd, -1,
 				   "No such file or directory: \"%s\"\n",
 				   names_pathname);
-
-	pid_t pid = getpid();
-
-	sprintf (fifo_pathname, "fifo_%d", pid);
 
 	if ((mkfifo (fifo_pathname, 0644) == -1) && (errno != EEXIST))
 		return err_printf (NULL, fifo_fd, names_fd, -1,
@@ -74,8 +74,6 @@ int reader (char* names_pathname)
 		return err_printf (fifo_pathname, fifo_fd, names_fd, -1,
 				   "err while writing to names_fifo\n");
 	
-	close (names_fd);
-
 	char buf [BUF_SIZE] = {};
 
 	int read_result = 0;
@@ -103,8 +101,13 @@ int reader (char* names_pathname)
 			return err_printf (fifo_pathname, fifo_fd, -1, names_fd, 
 					   "err while writing to stdout\n");
 
+		if (read_result)
+			break;
+
 		sleep (1);
 	}
+
+	close (names_fd);
 
 	read_result = -1;
 
@@ -137,9 +140,9 @@ int writer (char* names_pathname, char* target_pathname)
 				   "No such file or directory: \"%s\"\n",
 				   names_pathname);
 
-	int read_result = -1;
+	int read_result = read (names_fd, &fifo_pathname, FIFO_NAME_SIZE);
 
-	if ((read_result = read (names_fd, &fifo_pathname, FIFO_NAME_SIZE)) == -1)
+	if (read_result == -1)
 		return err_printf (NULL, fifo_fd, names_fd, target_fd,
 		   		   "err while reading from names_fifo\n");
 
