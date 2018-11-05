@@ -70,6 +70,11 @@ int reader (char* names_pathname)
 		return err_printf (NULL, fifo_fd, names_fd, -1,
 				   "can't create %s\n", fifo_pathname);
 
+	if ((fifo_fd = open (fifo_pathname, O_RDONLY | O_NONBLOCK)) == -1)
+		return err_printf (fifo_pathname, fifo_fd, names_fd, -1,
+				   "No such file or directory :\"%s\"\n",
+				   fifo_pathname);
+	
 	if (write (names_fd, &fifo_pathname, FIFO_NAME_SIZE) == -1)
 		return err_printf (fifo_pathname, fifo_fd, names_fd, -1,
 				   "err while writing to names_fifo\n");
@@ -79,11 +84,6 @@ int reader (char* names_pathname)
 	int read_result = 0;
 	
 	int time_until_death = MAX_TIME;
-
-	if ((fifo_fd = open (fifo_pathname, O_RDONLY | O_NONBLOCK)) == -1)
-		return err_printf (fifo_pathname, fifo_fd, names_fd, -1,
-				   "No such file or directory :\"%s\"\n",
-				   fifo_pathname);
 
 	while (read_result == 0)
 	{
@@ -106,6 +106,8 @@ int reader (char* names_pathname)
 
 		sleep (1);
 	}
+
+	fcntl (fifo_fd, F_SETFL, O_RDONLY);
 
 	close (names_fd);
 
@@ -160,6 +162,8 @@ int writer (char* names_pathname, char* target_pathname)
 				   "No such file or directory: \"%s\"\n",
 				   fifo_pathname);
 	}
+
+	fcntl (fifo_fd, F_SETFL, O_WRONLY);
 
 	if ((target_fd = open (target_pathname, O_RDONLY)) == -1)
 		return err_printf (fifo_pathname, fifo_fd, target_fd, names_fd,
