@@ -7,7 +7,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
-#define BUF_SIZE 32
+#define BUF_SIZE 16
 #define FIFO_NAME_SIZE 10
 #define MAX_TIME 7
 
@@ -203,12 +203,12 @@ int err_printf (char* fifo_pathname, int first_fd, int second_fd, int third_fd, 
 
 	va_list ap;
 	va_start (ap, format);
-	
 	vprintf (format, ap);
-
 	va_end (ap);
 
 	errno = err_tmp;
+
+	perror (NULL);
 
 	return -1;
 }

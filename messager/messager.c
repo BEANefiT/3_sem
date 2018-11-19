@@ -141,12 +141,12 @@ int err_printf (int msgqid, char* format, ...)
 
 	va_list ap;
 	va_start (ap, format);
-	
 	vprintf (format, ap);
-
 	va_end (ap);
 
 	errno = err_tmp;
+
+	perror (NULL);
 
 	return -1;
 }
