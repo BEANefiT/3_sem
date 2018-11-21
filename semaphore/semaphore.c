@@ -12,11 +12,11 @@
 #include <unistd.h>
 
 #define SEMKEY 21
-#define SEMNUM 1
+#define SEMNUM 3
 #define NSOPS 4
 #define SHMKEY 22
 #define SHMSIZE 32
-#define MAXTIME 100
+#define MAXTIME 200
 
 int err_printf (char* format, ...);
 int producer (char* pathname);
@@ -75,6 +75,13 @@ do					\
 	sops[counter++].sem_flg = flg;	\
 } while(0)
 
+#define SEMOP_NORET()					\
+do							\
+{							\
+	semop (semid, sops, counter);			\
+	counter = 0;					\
+} while(0)
+
 #define SEMOP()						\
 do							\
 {							\
@@ -90,8 +97,54 @@ do					\
 	SEMPUSH (num, -1 * val, 0);	\
 	SEMPUSH (num, 0, 0);		\
 	SEMPUSH (num, val, 0);		\
-	SEMPUSH (num, 1, 0);		\
+	SEMPUSH (num, 2, 0);		\
 	SEMOP();			\
+} while(0)
+
+#define SEMCHECK( num, val )			\
+({						\
+	SEMPUSH (num, -1 * val, IPC_NOWAIT);	\
+	SEMPUSH (num, 0, IPC_NOWAIT);		\
+	SEMPUSH (num, val, IPC_NOWAIT);		\
+						\
+	int res = semop (semid, sops, counter);	\
+	counter = 0;				\
+	res;					\
+})
+
+#define SHMCHECK()					\
+do							\
+{							\
+	if (BYTES_WRITTEN == BYTES_READ)		\
+	{						\
+		if (SEMCHECK (1, 0) == 0)		\
+		{					\
+			SEMPUSH (1, 1, 0);		\
+			SEMOP();			\
+		}					\
+	}						\
+							\
+	else						\
+	{						\
+		SEMPUSH (1, -1, IPC_NOWAIT);		\
+		SEMOP_NORET();				\
+	}						\
+							\
+	if ((BYTES_WRITTEN - BYTES_READ) >= SHMSIZE)	\
+	{						\
+		if (SEMCHECK (2, 0) == 0)		\
+		{					\
+			SEMPUSH (2, 1, 0);		\
+			SEMOP();			\
+		}					\
+	}						\
+							\
+	else						\
+	{						\
+		SEMPUSH (2, -1, IPC_NOWAIT);		\
+		SEMOP_NORET();				\
+	}						\
+							\
 } while(0)
 
 #define BYTES_WRITTEN ((int *)shmaddr)[0]
@@ -117,8 +170,10 @@ int producer (char* pathname)
 	
 	while (read_result != 0)
 	{
-		while ((BYTES_WRITTEN - BYTES_READ) >= SHMSIZE)
-			nanosleep((const struct timespec[]){{0, 200*1e6L}}, NULL);
+		SHMCHECK();
+		
+		SEMPUSH (2, 0, 0);
+		SEMOP();
 
 		void* buf = shmaddr + 8 + BYTES_WRITTEN % SHMSIZE;
 
@@ -127,6 +182,11 @@ int producer (char* pathname)
 
 		BYTES_WRITTEN += read_result;
 	}
+
+	SEMPUSH (0, -1, 0);
+	SEMOP();
+
+	return 0;
 }
 
 int consumer ()
@@ -142,15 +202,25 @@ int consumer ()
 		if ((time_until_death -= 1) <= 0)
 			return err_printf ("waiting for producer for too long\n");
 
-		nanosleep((const struct timespec[]){{0, 200*1e6L}}, NULL);
+		nanosleep((const struct timespec[]){{0, 100*1e6L}}, NULL);
 	}
 
 	int write_result = -1;
 
 	while (write_result != 0)
 	{
-		while (BYTES_READ == BYTES_WRITTEN)
-			nanosleep((const struct timespec[]){{0, 200*1e6L}}, NULL);
+		if (SEMCHECK (0, 2) == 0)
+		{
+			if (BYTES_READ == BYTES_WRITTEN)
+				break;
+		}
+
+		else
+		{
+			SHMCHECK();
+			SEMPUSH (1, 0, 0);
+			SEMOP();
+		}
 
 		void* buf = shmaddr + 8 + BYTES_READ % SHMSIZE;
 
@@ -159,6 +229,8 @@ int consumer ()
 
 		BYTES_READ += write_result;
 	}
+
+	return 0;
 }
 
 #undef BYTES_WRITTEN
@@ -166,7 +238,16 @@ int consumer ()
 
 #undef SEMWAIT
 #undef SEMOP
+#undef SEMOP_NORET
 #undef SEMPUSH
+#undef SEMCHECK
+#undef SHMCHECK
+
+#ifdef __GNUC__
+	int err_printf (char *format, ...) __attribute__ ((format(printf, 1, 2)));
+#else
+	int err_printf (char *format, ...);
+#endif /*__GNUC__*/
 
 int err_printf (char* format, ...)
 {
