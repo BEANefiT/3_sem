@@ -37,7 +37,7 @@ int main (int argc, char* argv[])
 	if ((semid = semget (SEMKEY, SEMNUM, IPC_CREAT | 0666)) == -1)
 		return err_printf ("Can't create semaphore's set\n");
 
-	if ((shmid = shmget (SHMKEY, SHMSIZE + 2, IPC_CREAT | 0666)) == -1)
+	if ((shmid = shmget (SHMKEY, SHMSIZE + 2 * sizeof (int), IPC_CREAT | 0666)) == -1)
 		return err_printf ("Can't create shared memory\n");
 
 	if ((shmaddr = shmat (shmid, NULL, 0)) == (void *) -1)
@@ -137,7 +137,12 @@ do									\
 	}								\
 									\
 	if ((SEMCHECK (0, 4) == 0) && (BYTES_WRITTEN == BYTES_READ))	\
-		break;							\
+	{								\
+		SEMPUSH (0, -3, 0);					\
+		SEMOP();						\
+									\
+		return 0;						\
+	}								\
 									\
 	if (BYTES_WRITTEN == BYTES_READ)				\
 	{								\
@@ -186,8 +191,6 @@ int producer (char* pathname)
 
 	BYTES_WRITTEN	= 0;
 	BYTES_READ	= 0;
-	SEMPUSH (SHMRD, -1, IPC_NOWAIT);
-	SEMOP_NORET();
 	SEMPUSH (SHMWR, -1, IPC_NOWAIT);
 	SEMOP_NORET();
 
@@ -200,10 +203,8 @@ int producer (char* pathname)
 	
 	while (read_result != 0)
 	{
-		
-
 		SHMCHECK (SHMWR);
-		SEMPUSH (2, 0, 0);
+		SEMPUSH (SHMWR, 0, 0);
 		SEMOP();
 
 		void* buf = shmaddr + 8 + BYTES_WRITTEN % SHMSIZE;
@@ -215,8 +216,12 @@ int producer (char* pathname)
 	}
 
 	SEMPUSH (0, 2, 0);
+	SEMPUSH (0, -1, SEM_UNDO);
 	SEMOP();			//successful exit, main semaphore value = 4
 					//if producer dies before this time, main_sem_val = 2
+	SEMPUSH (SHMRD, -1, IPC_NOWAIT);
+	SEMOP_NORET();
+
 	return 0;
 }
 
@@ -230,22 +235,12 @@ int consumer ()
 	SEMPUSH (0, 1, SEM_UNDO);
 	SEMOP();			//consumer waits for free producer
 
-	int time_until_death = MAXTIME;
-
-	while (!(BYTES_WRITTEN || BYTES_READ))
-	{
-		if ((time_until_death -= 1) <= 0)
-			return err_printf ("waiting for producer for too long\n");
-
-		nanosleep((const struct timespec[]){{0, 100*1e6L}}, NULL);
-	}
-
 	int write_result = -1;
 
 	while (1)
 	{
 		SHMCHECK (SHMRD);
-		SEMPUSH (1, 0, 0);
+		SEMPUSH (SHMRD, 0, 0);
 		SEMOP();
 
 		void* buf = shmaddr + 8 + BYTES_READ % SHMSIZE;
@@ -255,11 +250,6 @@ int consumer ()
 
 		BYTES_READ += write_result;
 	}
-
-	SEMPUSH (0, -3, 0);
-	SEMOP();
-
-	return 0;
 }
 
 #undef BYTES_WRITTEN
