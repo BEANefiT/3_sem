@@ -61,11 +61,15 @@ int main (int argc, char* argv[])
 		}
 	}
 
-	semctl (semid, 0, IPC_RMID, NULL);
 	shmctl (shmid, IPC_RMID, NULL);
 	
 	return 0;
 }
+
+#define BYTES_WRITTEN ((int *)shmaddr)[0]
+#define BYTES_READ ((int *)shmaddr)[1]
+#define SHMRD 1
+#define SHMWR 2
 
 #define SEMPUSH( num, op, flg )		\
 do					\
@@ -91,16 +95,6 @@ do							\
 	counter = 0;					\
 } while(0)
 
-#define SEMWAIT( num, val )		\
-do					\
-{					\
-	SEMPUSH (num, -1 * val, 0);	\
-	SEMPUSH (num, 0, 0);		\
-	SEMPUSH (num, val, 0);		\
-	SEMPUSH (num, 2, 0);		\
-	SEMOP();			\
-} while(0)
-
 #define SEMCHECK( num, val )			\
 ({						\
 	SEMPUSH (num, -1 * val, IPC_NOWAIT);	\
@@ -112,54 +106,90 @@ do					\
 	res;					\
 })
 
-#define SHMCHECK()					\
-do							\
-{							\
-	if (BYTES_WRITTEN == BYTES_READ)		\
-	{						\
-		if (SEMCHECK (1, 0) == 0)		\
-		{					\
-			SEMPUSH (1, 1, 0);		\
-			SEMOP();			\
-		}					\
-	}						\
-							\
-	else						\
-	{						\
-		SEMPUSH (1, -1, IPC_NOWAIT);		\
-		SEMOP_NORET();				\
-	}						\
-							\
-	if ((BYTES_WRITTEN - BYTES_READ) >= SHMSIZE)	\
-	{						\
-		if (SEMCHECK (2, 0) == 0)		\
-		{					\
-			SEMPUSH (2, 1, 0);		\
-			SEMOP();			\
-		}					\
-	}						\
-							\
-	else						\
-	{						\
-		SEMPUSH (2, -1, IPC_NOWAIT);		\
-		SEMOP_NORET();				\
-	}						\
-							\
+#define SHMCHECK( role )						\
+do									\
+{									\
+	if (SEMCHECK (0, 2) == 0)					\
+	{								\
+		SEMPUSH (0, -1, 0);					\
+		SEMOP();						\
+									\
+		errno = ECANCELED;					\
+									\
+		switch (role)						\
+		{							\
+			case SHMRD:					\
+			{						\
+				err_printf ("producer is dead:(\n");	\
+									\
+				break;					\
+			}						\
+									\
+			case SHMWR:					\
+			{						\
+				err_printf ("consumer is dead:(\n");	\
+									\
+				break;					\
+			}						\
+		}							\
+									\
+		return -1;						\
+	}								\
+									\
+	if ((SEMCHECK (0, 4) == 0) && (BYTES_WRITTEN == BYTES_READ))	\
+		break;							\
+									\
+	if (BYTES_WRITTEN == BYTES_READ)				\
+	{								\
+		if (SEMCHECK (1, 0) == 0)				\
+		{							\
+			SEMPUSH (1, 1, 0);				\
+			SEMOP();					\
+		}							\
+	}								\
+									\
+	else								\
+	{								\
+		SEMPUSH (1, -1, IPC_NOWAIT);				\
+		SEMOP_NORET();						\
+	}								\
+									\
+	if ((BYTES_WRITTEN - BYTES_READ) >= SHMSIZE)			\
+	{								\
+		if (SEMCHECK (2, 0) == 0)				\
+		{							\
+			SEMPUSH (2, 1, 0);				\
+			SEMOP();					\
+		}							\
+	}								\
+									\
+	else								\
+	{								\
+		SEMPUSH (2, -1, IPC_NOWAIT);				\
+		SEMOP_NORET();						\
+	}								\
+									\
 } while(0)
-
-#define BYTES_WRITTEN ((int *)shmaddr)[0]
-#define BYTES_READ ((int *)shmaddr)[1]
 
 int producer (char* pathname)
 {
 	int counter = 0;
 
 	SEMPUSH (0, 0, 0);
-	SEMPUSH (0, 1, 0);
-	SEMOP();
+	SEMPUSH (0, 1, SEM_UNDO);
+	SEMOP();			//producers enters if there is no other producer/consumer
+
+	SEMPUSH (0, -3, 0);
+	SEMPUSH (0, 0, 0);
+	SEMPUSH (0, 3, 0);
+	SEMOP();			//producers waits for consumer
 
 	BYTES_WRITTEN	= 0;
 	BYTES_READ	= 0;
+	SEMPUSH (SHMRD, -1, IPC_NOWAIT);
+	SEMOP_NORET();
+	SEMPUSH (SHMWR, -1, IPC_NOWAIT);
+	SEMOP_NORET();
 
 	int filefd = -1;
 
@@ -170,8 +200,9 @@ int producer (char* pathname)
 	
 	while (read_result != 0)
 	{
-		SHMCHECK();
 		
+
+		SHMCHECK (SHMWR);
 		SEMPUSH (2, 0, 0);
 		SEMOP();
 
@@ -183,9 +214,9 @@ int producer (char* pathname)
 		BYTES_WRITTEN += read_result;
 	}
 
-	SEMPUSH (0, -1, 0);
-	SEMOP();
-
+	SEMPUSH (0, 2, 0);
+	SEMOP();			//successful exit, main semaphore value = 4
+					//if producer dies before this time, main_sem_val = 2
 	return 0;
 }
 
@@ -193,7 +224,11 @@ int consumer ()
 {
 	int counter = 0;
 
-	SEMWAIT (0, 1);
+	SEMPUSH (0, -1, 0);
+	SEMPUSH (0, 0, 0);
+	SEMPUSH (0, 2, 0);
+	SEMPUSH (0, 1, SEM_UNDO);
+	SEMOP();			//consumer waits for free producer
 
 	int time_until_death = MAXTIME;
 
@@ -207,20 +242,11 @@ int consumer ()
 
 	int write_result = -1;
 
-	while (write_result != 0)
+	while (1)
 	{
-		if (SEMCHECK (0, 2) == 0)
-		{
-			if (BYTES_READ == BYTES_WRITTEN)
-				break;
-		}
-
-		else
-		{
-			SHMCHECK();
-			SEMPUSH (1, 0, 0);
-			SEMOP();
-		}
+		SHMCHECK (SHMRD);
+		SEMPUSH (1, 0, 0);
+		SEMOP();
 
 		void* buf = shmaddr + 8 + BYTES_READ % SHMSIZE;
 
@@ -230,13 +256,17 @@ int consumer ()
 		BYTES_READ += write_result;
 	}
 
+	SEMPUSH (0, -3, 0);
+	SEMOP();
+
 	return 0;
 }
 
 #undef BYTES_WRITTEN
 #undef BYTES_READ
+#undef SHMRD
+#undef SHMWR
 
-#undef SEMWAIT
 #undef SEMOP
 #undef SEMOP_NORET
 #undef SEMPUSH
@@ -244,16 +274,15 @@ int consumer ()
 #undef SHMCHECK
 
 #ifdef __GNUC__
+
 	int err_printf (char *format, ...) __attribute__ ((format(printf, 1, 2)));
-#else
-	int err_printf (char *format, ...);
+
 #endif /*__GNUC__*/
 
 int err_printf (char* format, ...)
 {
 	int err_tmp = errno;
 
-	(semid == -1) || semctl (semid, 0, IPC_RMID, NULL);
 	(shmid == -1) || shmctl (shmid, IPC_RMID, NULL);
 
 	va_list ap;
