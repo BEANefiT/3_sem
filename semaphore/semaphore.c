@@ -129,13 +129,7 @@ do                                                                  \
     }                                                               \
                                                                     \
     if ((SEMCHECK (0, 5) == 0) && (BYTES_WRITTEN == BYTES_READ))    \
-    {                                                               \
-        SEMPUSH (0, -4, 0);                                         \
-        SEMPUSH (SHMWR, 1, 0);                                      \
-        SEMOP();                                                    \
-                                                                    \
         return 0;                                                   \
-    }                                                               \
                                                                     \
 } while(0)
 
@@ -150,6 +144,8 @@ do                                                                  \
 
         case 2: producer or consumer is dead
 
+        case 3: producer succeded; consumer died
+
         case 4: there is a pair producer + consumer
 
         case 5: producer done and exited, consumer is still obtaining from shm
@@ -163,12 +159,12 @@ int producer (char* pathname)
     SEMPUSH (0, 0, 0);
     SEMPUSH (0, 2, SEM_UNDO);
     SEMPUSH (0, -1, 0);
-    SEMOP();            //producers enters if there is no other producer/consumer
+    SEMOP();        //producers enters if there is no other producer/consumer
 
     SEMPUSH (0, -4, 0);
     SEMPUSH (0, 0, 0);
     SEMPUSH (0, 4, 0);
-    SEMOP();            //producers waits for consumer
+    SEMOP();        //producers waits for consumer
 
     BYTES_WRITTEN   = 0;
     BYTES_READ  = 0;
@@ -199,11 +195,7 @@ int producer (char* pathname)
             return err_printf ("err while read() from filen\n");
 
         if ((size_available != 0) && (read_result == 0))
-        {
-            SEMPUSH (SHMRD, 1, 0);
-            SEMOP();
             break;
-        }
 
         BYTES_WRITTEN += read_result;
 
@@ -213,12 +205,13 @@ int producer (char* pathname)
         SEMOP();
     }
 
+    SEMPUSH (0, 1, SEM_UNDO);
+    SEMOP();            //successful end of producing, main semaphore value = 5
+                        //if producer dies before this time, main_sem_val = 2
+    SEMPUSH (0, -3, 0);
+    SEMPUSH (0, 0, 0);
     SEMPUSH (0, 3, 0);
-    SEMPUSH (0, -2, SEM_UNDO);
-    SEMOP();            //successful exit, main semaphore value = 5
-                    //if producer dies before this time, main_sem_val = 2
-    SEMPUSH (SHMRD, -1, IPC_NOWAIT);
-    SEMOP_NORET();
+    SEMOP();            //waiting for consumer ends
 
     return 0;
 }
