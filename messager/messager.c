@@ -10,143 +10,143 @@
 
 struct msgbuf
 {
-	long mtype;
+    long mtype;
 };
 
-int	err_printf (int msgqid, char* format, ...);
-long	get_int (char *str);
-int	send_msg (int msgqid, long mtype);
-int	get_msg(int msgqid, long mtype);
+int err_printf (int msgqid, char* format, ...);
+long    get_int (char *str);
+int send_msg (int msgqid, long mtype);
+int get_msg(int msgqid, long mtype);
 
 int main (int argc, char *argv[])
 {
-	if (argc < 2)
-		return err_printf (0, "Enter argument\n");
+    if (argc < 2)
+        return err_printf (0, "Enter argument\n");
 
-	if (argc > 2)
-		return err_printf (0, "Too many arguments\n");
+    if (argc > 2)
+        return err_printf (0, "Too many arguments\n");
 
-	long	counter = get_int (argv [1]);
-	pid_t	id = -1;
-	int 	msgqid = -1;
-	int	critqid = -1;
-	long 	N = 0;
+    long    counter = get_int (argv [1]);
+    pid_t   id = -1;
+    int     msgqid = -1;
+    int critqid = -1;
+    long    N = 0;
 
-	if ((msgqid = msgget(IPC_PRIVATE, IPC_CREAT | 0644)) == -1)
-	{
-		return err_printf (0, "Can't create msg queue\n");
-	}
+    if ((msgqid = msgget(IPC_PRIVATE, IPC_CREAT | 0644)) == -1)
+    {
+        return err_printf (0, "Can't create msg queue\n");
+    }
 
-	for (long i = 0; i < counter; i++)
-	{
-		if (id != 0)
-		{
-			if((id = fork ()) == -1)
-			{
-				err_printf (msgqid, "Can't create clone process; iter = %d\n", i);
+    for (long i = 0; i < counter; i++)
+    {
+        if (id != 0)
+        {
+            if((id = fork ()) == -1)
+            {
+                err_printf (msgqid, "Can't fork new process; iter = %d\n", i);
 
-				for (long j = 0; j < i - 1; j++)
-					wait (NULL);
+                for (long j = 0; j < i - 1; j++)
+                    wait (NULL);
 
-				return -1;
-			}
-		}
+                return -1;
+            }
+        }
 
-		if (id == 0)
-		{
-			N = i + 1;
+        if (id == 0)
+        {
+            N = i + 1;
 
-			break;
-		}
-	}
+            break;
+        }
+    }
 
-	if (id != 0)
-	{
-		if (send_msg (msgqid, 1) == -1)
-			return err_printf (msgqid, "Parent can't send start msg\n");
-	}
+    if (id != 0)
+    {
+        if (send_msg (msgqid, 1) == -1)
+            return err_printf (msgqid, "Parent can't send start msg\n");
+    }
 
-	if (id == 0)
-	{
-		if (get_msg (msgqid, N) == -1)
-			return err_printf (msgqid, "child #%d can't get msg\n", N);
+    if (id == 0)
+    {
+        if (get_msg (msgqid, N) == -1)
+            return err_printf (msgqid, "child #%d can't get msg\n", N);
 
-		printf ("%d ", N);
+        printf ("%d ", N);
 
-		fflush (stdout);
+        fflush (stdout);
 
-		if (send_msg (msgqid, N + 1) == -1)
-			return err_printf (msgqid, "child #%d can't send msg\n", N);
-	}
+        if (send_msg (msgqid, N + 1) == -1)
+            return err_printf (msgqid, "child #%d can't send msg\n", N);
+    }
 
-	if (id != 0)
-	{
-		for (long i = 0; i < counter; i++)
-			wait (NULL);
+    if (id != 0)
+    {
+        for (long i = 0; i < counter; i++)
+            wait (NULL);
 
-		msgctl (msgqid, IPC_RMID, NULL);
-		
-		printf ("\n");
-	}
+        msgctl (msgqid, IPC_RMID, NULL);
+        
+        printf ("\n");
+    }
 
-	return 0;
+    return 0;
 }
 
 int send_msg (int msgqid, long mtype)
 {
-	struct msgbuf message;
+    struct msgbuf message;
 
-	message.mtype = mtype;
+    message.mtype = mtype;
 
-	return msgsnd(msgqid, (void*) &message, 0, 0);
+    return msgsnd(msgqid, (void*) &message, 0, 0);
 }
 
 int get_msg (int msgqid, long mtype)
 {
-	struct msgbuf message = {};
+    struct msgbuf message = {};
 
-	int result = -1;
+    int result = -1;
 
-	result = msgrcv (msgqid, (void*) &message, 0, mtype, 0);
+    result = msgrcv (msgqid, (void*) &message, 0, mtype, 0);
 }
 
 long get_int (char *str)
 {
-	char *_endptr;
+    char *_endptr;
 
-	long arg = strtol (str, &_endptr, 10);
+    long arg = strtol (str, &_endptr, 10);
 
-	if (*_endptr != '\0' && *str != '\0')
-	{
-		printf ("Bad argument\n");
+    if (*_endptr != '\0' && *str != '\0')
+    {
+        printf ("Bad argument\n");
 
-		exit (2);
-	}
+        exit (2);
+    }
 
-	if (errno == ERANGE)
-	{
-		printf ("Overflow\n");
+    if (errno == ERANGE)
+    {
+        printf ("Overflow\n");
 
-		exit (3);
-	}
+        exit (3);
+    }
 
-	return arg;
+    return arg;
 }
 
 int err_printf (int msgqid, char* format, ...)
 {
-	int err_tmp = errno;
+    int err_tmp = errno;
 
-	msgctl (msgqid, IPC_RMID, NULL);
+    msgctl (msgqid, IPC_RMID, NULL);
 
-	va_list ap;
-	va_start (ap, format);
-	vprintf (format, ap);
-	va_end (ap);
+    va_list ap;
+    va_start (ap, format);
+    vprintf (format, ap);
+    va_end (ap);
 
-	errno = err_tmp;
+    errno = err_tmp;
 
-	perror (NULL);
+    perror (NULL);
 
-	return -1;
+    return -1;
 }
