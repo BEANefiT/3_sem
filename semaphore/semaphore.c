@@ -31,7 +31,10 @@ int main (int argc, char* argv[])
     int is_producer = (argc == 2);
 
     if (argc > 2)
+    {
+        errno = EINVAL;
         return err_printf ("Too many arguments\n");
+    }
 
     if ((semid = semget (SEMKEY, SEMNUM, IPC_CREAT | 0666)) == -1)
         return err_printf ("Can't create semaphore's set\n");
@@ -59,8 +62,6 @@ int main (int argc, char* argv[])
             exit (EXIT_FAILURE);
         }
     }
-
-    shmctl (shmid, IPC_RMID, NULL);
 
     return 0;
 }
