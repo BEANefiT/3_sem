@@ -9,11 +9,11 @@
 
 #define BUFSIZE 32
 
-int     err_printf (char* format, ...);
-void    catch_bit (int signum);
-void    die (int signum);
-int     receive (pid_t pid, void* buf, size_t count);
-int     send    (pid_t pid, void* buf, size_t count);
+void    nop         (int signum){}
+void    die         (int signum);
+int     receive     (pid_t pid, void* buf, size_t count){}
+int     send        (pid_t pid, void* buf, size_t count){}
+int     err_printf  (char* format, ...);
 
 #define SIGACTION( signum, foo )                                        \
 do                                                                      \
@@ -36,23 +36,26 @@ int main (int argc, char *argv[])
 
     struct sigaction act = {};
 
+
     SIGACTION (SIGCHLD, die);
 
     sigset_t set = {};
     if (sigemptyset (&set)          == -1 ||
-        sigaddset   (&set. SIGUSR1) == -1 ||
+        sigaddset   (&set, SIGUSR1) == -1 ||
         sigaddset   (&set, SIGUSR2) == -1)
     {
         return err_printf ("can't create set of signals\n");
     }
 
-    if((id = fork ()) == -1)
+    if((pid = fork ()) == -1)
         return err_printf ("can't fork new process\n");
 
-    if (id != 0)
+    if (pid != 0)
     {
-        SIGACTION (SIGUSR1, catch_bit);
-        SIGACTION (SIGUSR2, catch_bit);
+        SIGACTION (SIGUSR1, nop);
+        SIGACTION (SIGUSR2, nop);
+
+        int kek = sigtimedwait (&set, NULL, (const struct timespec[]){{0, 5 * 1e8L}});
 
         char    buf [BUFSIZE] = {};
 
@@ -71,13 +74,13 @@ int main (int argc, char *argv[])
         }
     }
 
-    if (id == 0)
+    if (pid == 0)
     {
-        SIGACTION (SIGUSR1, SIG_IGN);
+        SIGACTION (SIGUSR1, nop);
 
         char    buf [BUFSIZE] = {};
 
-        size_t     nbytes = -1;
+        size_t  nbytes = -1;
 
         while (nbytes != 0)
         {
@@ -96,6 +99,15 @@ int main (int argc, char *argv[])
 }
 
 #undef BUFSIZE
+#undef SIGACTION
+
+void die (int signum)
+{
+    errno = CHILD;
+    err_printf ("EXIT_FAILURE\n");
+
+    exit (EXIT_FAILURE);
+}
 
 #ifdef __GNUC__
 
@@ -107,14 +119,12 @@ int err_printf (char* format, ...)
 {
     int err_tmp = errno;
 
-    (shmid == -1) || shmctl (shmid, IPC_RMID, NULL);
-
     va_list ap;
     va_start (ap, format);
     vfprintf (stderr, format, ap);
     va_end (ap);
 
-    printf (stderr, "\t");
+    fprintf (stderr, "\t");
 
     errno = err_tmp;
     perror (NULL);
