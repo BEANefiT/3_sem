@@ -108,6 +108,20 @@ do                                              \
     res;                                    \
 })
 
+/*
+    ALGORITHM:
+
+    case (SEMPROD == 0): no producer;
+
+    case (SEMPROD == 1): single producer;
+
+    case (SEMPROD == 2): producer which has (had) consumer;
+
+    case (SEMCONS == 0): no consumer;
+
+    case (SEMCONS == 1): consumer exists;
+*/
+
 int producer (char* pathname)
 {
     int counter = 0;
@@ -116,7 +130,7 @@ int producer (char* pathname)
     SEMPUSH (SEMCONS,  0, 0);
     SEMPUSH (SEMPROD,  2, SEM_UNDO);
     SEMPUSH (SEMPROD, -1, 0);
-    SEMOP();
+    SEMOP();                // if no {consumer + producer} => producer enters
 
     SEMPUSH (SHMWR, -1, IPC_NOWAIT);
     SEMOP_NORET();
@@ -124,7 +138,7 @@ int producer (char* pathname)
     SEMPUSH (SEMCONS, -1, 0);
     SEMPUSH (SEMCONS,  0, 0);
     SEMPUSH (SEMCONS,  1, 0);
-    SEMOP();
+    SEMOP();                // waits for consumer
 
     int filefd = -1;
 
@@ -165,10 +179,10 @@ int producer (char* pathname)
 
     SEMPUSH (SHMRD,  -1, 0);
     SEMPUSH (SEMPROD, 1, SEM_UNDO);
-    SEMOP();
+    SEMOP();                    // producer stopped use of shmem => SEMPROD == 3
 
     SEMPUSH (SEMCONS, 0, 0);
-    SEMOP();
+    SEMOP();                    // waits till consumer ends or dies
 
     return 0;
 }
@@ -183,7 +197,7 @@ int consumer ()
     SEMPUSH (SEMCONS,  0, 0);
     SEMPUSH (SEMCONS,  1, SEM_UNDO);
     SEMPUSH (SHMRD,    1, SEM_UNDO);
-    SEMOP();
+    SEMOP();                    // if there is free producer => consumer enters
 
     int write_result = -1;
 
