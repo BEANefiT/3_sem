@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 typedef struct pair_t
 {
@@ -38,6 +41,13 @@ do {                                \
 
 #define MIN( a,b ) (((a) < (b)) ? (a) : (b))
 
+#define CLOSE( fd ) \
+do {                \
+    int tmpfd = fd; \
+    fd = -1;        \
+    close (tmpfd);  \
+} while(0)
+
 int main (int argc, char *argv[])
 {
     if (argc != 3)
@@ -57,6 +67,11 @@ int main (int argc, char *argv[])
     pid_t   id = 0;
     int     i = 0;
 
+    if ((pairs[0].rfd = open (argv[2], O_RDONLY)) == -1)
+        return err_printf ("cannot open file\n");
+
+    pairs[2 * N - 1].wfd = STDOUT_FILENO;
+
     for (i = 0; i < N; i++)
     {
         int pipefd1 [2];
@@ -75,6 +90,12 @@ int main (int argc, char *argv[])
             pairs[2 * i].rfd        = pipefd1[0];
         }
 
+        if (i == 0)
+        {
+            close (pipefd1[0]);
+            close (pipefd1[1]);
+        }
+
         pairs[2 * i].wfd        = pipefd2[1];
         pairs[2 * i + 1].rfd    = pipefd2[0];
 
@@ -87,17 +108,11 @@ int main (int argc, char *argv[])
 
         if (id == 0)
         {
-            close (pipefd1[1]);
-            close (pipefd2[0]);
-
             if (child (2 * i) == -1)
                 return err_printf ("child #%d error\n", i);
 
             return 0;
         }
-
-        close (pipefd1[0]);
-        close (pipefd2[1]);
     }
 
     if (parent (N) == -1)
@@ -111,6 +126,14 @@ int main (int argc, char *argv[])
 
 int child (int idx)
 {
+    for (int i = 0; i < idx / 2; i++)
+    {
+        CLOSE (pairs[2 * i + 1].wfd);
+        CLOSE (pairs[2 * i + 1].rfd);
+    }
+
+    CLOSE (pairs[idx + 1].rfd);
+
     char buf[4096] = {};
 
     int read_result = -1;
@@ -120,28 +143,35 @@ int child (int idx)
         if ((read_result = read (pairs[idx].rfd, buf, 4096)) == -1)
             return err_printf ("cannot read from rfd\n");
 
-        if (write (pairs[idx].wfd, buf, 4096) == -1)
+        if (write (pairs[idx].wfd, buf, read_result) == -1)
             return err_printf ("cannot write to wfd\n");
     }
 
-    close (pairs[idx].rfd);
-    close (pairs[idx].wfd);
-    pairs[idx].rfd = -1;
-    pairs[idx].wfd = -1;
+    printf ("\n\n\n\n\n\nCHILD\n\n\n\n\n");
+    CLOSE (pairs[idx].wfd);
+    CLOSE (pairs[idx].rfd);
 
     return 0;
 }
 
 int parent (int N)
 {
+    for (int i = 0; i < N; i++)
+    {
+        fcntl (pairs[2 * i + 1].rfd, F_SETFL, O_NONBLOCK);
+        fcntl (pairs[2 * i + 1].wfd, F_SETFL, O_NONBLOCK);
+
+        CLOSE (pairs[2 * i].wfd);
+        CLOSE (pairs[2 * i].rfd);
+    }
+
     if ((bufs = (buf_t *) calloc (N, sizeof (buf_t))) == NULL)
         return err_printf ("cannot create buf_ptrs array\n");
 
     for (int i = 0; i < N; i++)
     {
-        bufs[i].buf_sz = MIN (1024 * pow (3, N - i), 128 * 1024);
+        bufs[i].buf_sz = MIN (1024 * pow (3, N - i), 128 << 10);
 
-        
         if ((bufs[i].buf = calloc (bufs[i].buf_sz, 1)) == NULL)
             return err_printf ("cannot allocate %zd buf\n", bufs[i].buf_sz);
     }
@@ -160,7 +190,7 @@ int parent (int N)
 
             if (pairs[idx].rfd > nfds) nfds = pairs[idx].rfd;
 
-            if (pairs[idx].wfd > nfds) nfds = pairs[idx].wds;
+            if (pairs[idx].wfd > nfds) nfds = pairs[idx].wfd;
 
             if (pairs[idx].rfd != -1) FD_SET (pairs[idx].rfd, &rfds);
 
@@ -199,7 +229,10 @@ int piperd (int i)
     {
         case -1: { return -1; }
 
-        case  0: { close (pairs[idx].rfd); pairs[idx].rfd = -1; break; }
+        case  0: {          
+            CLOSE (pairs[idx].rfd);
+            break;
+        }
     }
 
     return 0;
@@ -213,7 +246,11 @@ int pipewr (int i)
     {
         case -1: { return -1; }
 
-        case  0: { close (pairs[idx].wfd); pairs[idx].wfd = -1; break; }
+        case  0: {
+            if (pairs[idx].wfd != STDOUT_FILENO)
+                CLOSE (pairs[idx].wfd);
+                break;
+        }
     }
 
     return 0;
