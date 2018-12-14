@@ -20,6 +20,7 @@ typedef struct buf_t
 {
     void*   buf;
     size_t  buf_sz;
+    int     nbytes;
 } buf_t;
 
 int     err_printf  (char* format, ...);
@@ -131,6 +132,8 @@ int child (int idx)
 {
     for (int i = 0; i < idx / 2; i++)
     {
+        CLOSE (pairs[2 * i].wfd);
+        CLOSE (pairs[2 * i].rfd);
         CLOSE (pairs[2 * i + 1].wfd);
         CLOSE (pairs[2 * i + 1].rfd);
     }
@@ -150,7 +153,6 @@ int child (int idx)
             return err_printf ("cannot write to wfd\n");
     }
 
-    printf ("\n\n\n\n\n\nCHILD\n\n\n\n\n");
     CLOSE (pairs[idx].wfd);
     CLOSE (pairs[idx].rfd);
 
@@ -228,16 +230,15 @@ int piperd (int i)
 {
     int idx = 2 * i + 1;
 
-    switch (read (pairs[idx].rfd, bufs[i].buf, bufs[i].buf_sz))
-    {
-        case -1: { return -1; }
+    int read_result = read (pairs[idx].rfd, bufs[i].buf, bufs[i].buf_sz);
+    
+    bufs[i].nbytes += read_result;
 
-        case  0: {          
-            CLOSE (pairs[idx].rfd);
-            CLOSE (pairs[idx].wfd);
-            break;
-        }
-    }
+    if (read_result == -1)
+        return -1;
+
+    if (read_result == 0)
+        CLOSE (pairs[idx].rfd);
 
     return 0;
 }
@@ -246,8 +247,18 @@ int pipewr (int i)
 {
     int idx = 2 * i + 1;
 
-    if (write (pairs[idx].wfd, bufs[i].buf, bufs[i].buf_sz) == -1)
+    int write_result = 0;
+
+    if (bufs[i].nbytes > 0)
+        write_result = write (pairs[idx].wfd, bufs[i].buf, bufs[i].nbytes);
+
+    if (write_result == -1)
         return -1;
+
+    bufs[i].nbytes -= write_result;
+
+    if ((bufs[i].nbytes == 0) && (pairs[idx].rfd == -1))
+        CLOSE (pairs[idx].wfd);
 
     return 0;
 }
