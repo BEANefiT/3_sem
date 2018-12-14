@@ -56,13 +56,16 @@ int main (int argc, char *argv[])
         return err_printf ("Usage: %s {child_num} {filename}\n", argv[0]);
     }
 
-    int N = get_int (argv[1]);
+    int N = -1;
+    
+    if ((N = get_int (argv[1])) == -1)
+        errno = EINVAL;
 
     if (errno != 0)
         return err_printf ("Bad child_num\n");
 
     if ((pairs = (pair_t *) calloc (2 * N, sizeof (pair_t))) == NULL)
-        return err_printf ("cannot allocate memory for pair_t [2 * %d]\n", N);
+        return err_printf ("can't alloc memory (pair_t[sz = 2 * \'%d\'])\n", N);
 
     pid_t   id = 0;
     int     i = 0;
@@ -158,8 +161,8 @@ int parent (int N)
 {
     for (int i = 0; i < N; i++)
     {
-        fcntl (pairs[2 * i + 1].rfd, F_SETFL, O_NONBLOCK);
-        fcntl (pairs[2 * i + 1].wfd, F_SETFL, O_NONBLOCK);
+        fcntl (pairs[2 * i + 1].rfd, F_SETFL, O_RDONLY | O_NONBLOCK);
+        fcntl (pairs[2 * i + 1].wfd, F_SETFL, O_WRONLY | O_NONBLOCK);
 
         CLOSE (pairs[2 * i].wfd);
         CLOSE (pairs[2 * i].rfd);
@@ -231,6 +234,7 @@ int piperd (int i)
 
         case  0: {          
             CLOSE (pairs[idx].rfd);
+            CLOSE (pairs[idx].wfd);
             break;
         }
     }
@@ -242,16 +246,8 @@ int pipewr (int i)
 {
     int idx = 2 * i + 1;
 
-    switch (write (pairs[idx].wfd, bufs[i].buf, bufs[i].buf_sz))
-    {
-        case -1: { return -1; }
-
-        case  0: {
-            if (pairs[idx].wfd != STDOUT_FILENO)
-                CLOSE (pairs[idx].wfd);
-                break;
-        }
-    }
+    if (write (pairs[idx].wfd, bufs[i].buf, bufs[i].buf_sz) == -1)
+        return -1;
 
     return 0;
 }
