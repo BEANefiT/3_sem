@@ -150,8 +150,6 @@ int child (int idx)
 
     while (read_result != 0)
     {
-        sleep (1);
-
         if ((read_result = read (pairs[idx].rfd, buf, 4096)) == -1)
             return err_printf ("cannot read from rfd\n");
 
@@ -202,7 +200,7 @@ int parent (int N)
         {
             int idx = 2 * i + 1;
 
-            if (pairs[idx].rfd != -1)
+            if ((pairs[idx].rfd != -1) && ((bufs[i].nbytes_wr - bufs[i].nbytes_rd) < bufs[i].buf_sz))
             {
                 if (pairs[idx].rfd > nfds) nfds = pairs[idx].rfd;
 
