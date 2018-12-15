@@ -20,7 +20,8 @@ typedef struct buf_t
 {
     void*   buf;
     size_t  buf_sz;
-    int     nbytes;
+    size_t  nbytes_rd;
+    size_t  nbytes_wr;
 } buf_t;
 
 int     err_printf  (char* format, ...);
@@ -29,6 +30,7 @@ int     child       (int idx);
 int     parent      (int N);
 int     piperd      (int i);
 int     pipewr      (int i);
+
 buf_t*  bufs  = NULL;
 pair_t* pairs = NULL;
 
@@ -58,8 +60,8 @@ int main (int argc, char *argv[])
     }
 
     int N = -1;
-    
-    if ((N = get_int (argv[1])) == -1)
+
+    if ((N = get_int (argv[1])) < 0)
         errno = EINVAL;
 
     if (errno != 0)
@@ -125,6 +127,8 @@ int main (int argc, char *argv[])
     for (int j = 0; j < N; j++)
         wait (NULL);
 
+    free (pairs);
+
     return 0;
 }
 
@@ -146,6 +150,8 @@ int child (int idx)
 
     while (read_result != 0)
     {
+        sleep (1);
+
         if ((read_result = read (pairs[idx].rfd, buf, 4096)) == -1)
             return err_printf ("cannot read from rfd\n");
 
@@ -179,6 +185,9 @@ int parent (int N)
 
         if ((bufs[i].buf = calloc (bufs[i].buf_sz, 1)) == NULL)
             return err_printf ("cannot allocate %zd buf\n", bufs[i].buf_sz);
+
+        bufs[i].nbytes_wr = 0;
+        bufs[i].nbytes_rd = 0;
     }
 
     while(1)
@@ -193,13 +202,19 @@ int parent (int N)
         {
             int idx = 2 * i + 1;
 
-            if (pairs[idx].rfd > nfds) nfds = pairs[idx].rfd;
+            if (pairs[idx].rfd != -1)
+            {
+                if (pairs[idx].rfd > nfds) nfds = pairs[idx].rfd;
 
-            if (pairs[idx].wfd > nfds) nfds = pairs[idx].wfd;
+                FD_SET (pairs[idx].rfd, &rfds);
+            }
 
-            if (pairs[idx].rfd != -1) FD_SET (pairs[idx].rfd, &rfds);
+            if ((pairs[idx].wfd != -1) && (bufs[i].nbytes_wr > bufs[i].nbytes_rd))
+            {
+                if (pairs[idx].wfd > nfds) nfds = pairs[idx].wfd;
 
-            if (pairs[idx].wfd != -1) FD_SET (pairs[idx].wfd, &wfds);
+                FD_SET (pairs[idx].wfd, &wfds);
+            }
         }
 
         if (!nfds) break;
@@ -211,53 +226,79 @@ int parent (int N)
         {
             int idx = 2 * i + 1;
 
-            if (FD_ISSET (pairs[idx].rfd, &rfds))
+            if ((FD_ISSET (pairs[idx].rfd, &rfds)) && (pairs[idx].rfd != -1))
             {
                 if (piperd (i) == -1)
                     return err_printf ("piperd error\n");
             }
 
-            if (FD_ISSET (pairs[idx].wfd, &wfds))
+            if ((FD_ISSET (pairs[idx].wfd, &wfds)) && (pairs[idx].wfd != -1))
             {
                 if (pipewr (i) == -1)
                     return err_printf ("pipewr error\n");
             }
         }
     }
+
+    for (int i = 0; i < N; i++)
+    {
+        free (bufs[i].buf);
+    }
+
+    free (bufs);
+
+    return 0;
 }
 
 int piperd (int i)
 {
-    int idx = 2 * i + 1;
+    int     idx = 2 * i + 1;
+    size_t  nbytes_wr = bufs[i].nbytes_wr % bufs[i].buf_sz;
+    size_t  nbytes_rd = bufs[i].nbytes_rd % bufs[i].buf_sz;
+    size_t  nbytes = 0;
 
-    int read_result = read (pairs[idx].rfd, bufs[i].buf, bufs[i].buf_sz);
-    
-    bufs[i].nbytes += read_result;
+    if (nbytes_wr >= nbytes_rd) nbytes = bufs[i].buf_sz - nbytes_wr;
 
-    if (read_result == -1)
+    else                        nbytes = nbytes_rd - nbytes_wr;
+
+    size_t rd_res = read(pairs[idx].rfd, bufs[i].buf + nbytes_wr, nbytes);
+
+    bufs[i].nbytes_wr += rd_res;
+
+    if (rd_res == -1)
         return -1;
 
-    if (read_result == 0)
+    if ((rd_res == 0) && (nbytes != 0))
+    {
         CLOSE (pairs[idx].rfd);
+
+        if (bufs[i].nbytes_wr == bufs[i].nbytes_rd)
+            CLOSE (pairs[idx].wfd);
+    }
+
 
     return 0;
 }
 
 int pipewr (int i)
 {
-    int idx = 2 * i + 1;
+    int     idx = 2 * i + 1;
+    size_t  nbytes_wr = bufs[i].nbytes_wr % bufs[i].buf_sz;
+    size_t  nbytes_rd = bufs[i].nbytes_rd % bufs[i].buf_sz;
+    size_t  nbytes = 0;
 
-    int write_result = 0;
+    if (nbytes_rd >= nbytes_wr) nbytes = bufs[i].buf_sz - nbytes_rd;
 
-    if (bufs[i].nbytes > 0)
-        write_result = write (pairs[idx].wfd, bufs[i].buf, bufs[i].nbytes);
+    else                        nbytes = nbytes_wr - nbytes_rd;
 
-    if (write_result == -1)
+    size_t wr_res = write (pairs[idx].wfd, bufs[i].buf + nbytes_rd, nbytes);
+
+    if (wr_res == -1)
         return -1;
 
-    bufs[i].nbytes -= write_result;
+    bufs[i].nbytes_rd += wr_res;
 
-    if ((bufs[i].nbytes == 0) && (pairs[idx].rfd == -1))
+    if ((bufs[i].nbytes_wr == bufs[i].nbytes_rd) && (pairs[idx].rfd == -1))
         CLOSE (pairs[idx].wfd);
 
     return 0;
